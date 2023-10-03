@@ -1,0 +1,18 @@
+[
+    {
+        "role": "L",
+        "content": "qa: what is lagrange"
+    },
+    {
+        "role": "Lagbot",
+        "content": "Lagrange is a platform that leverages the Blockchain and Solana's existing technology to build a decentralized 24/7 forex platform. It offers different tools that connect the Traditional FX markets with crypto. Lagrange acts as an ECN for digital currencies, directly communicating and interacting with Serum Onchain CLOB, different types of Market-Makers, and Retail traders. Its target customer base includes forex traders, institutional investors, yield farmers/LPs, and any other curious investor/trader. Lagrange aims to provide a balanced, secure, stable, and profitable holding service for users in the crypto ecosystem."
+    },
+    {
+        "role": "L",
+        "content": "qa: what technology does Lagrange use?"
+    },
+    {
+        "role": "Lagbot",
+        "content": "Lagrange utilizes blockchain technology and Solana's existing technology to build a decentralized 24/7 forex platform."
+    }
+]

@@ -1,6 +1,6 @@
 from dotenv import load_dotenv
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
-from langchain.vectorstores import Chroma
+from langchain.vectorstores import ZepVectorStore
 from langchain.embeddings import OpenAIEmbeddings
 from langchain.chains import RetrievalQA
 from langchain.memory import ConversationBufferMemory
@@ -8,18 +8,21 @@ from langchain.prompts import PromptTemplate
 from langchain.chat_models import ChatOpenAI
 from langchain.text_splitter import Language, RecursiveCharacterTextSplitter
 from langchain.docstore.document import Document
-import chromadb
-import characters
 import settings
 import openai
 import os
 import json
 import helper_module
 from pathlib import Path
+from langchain.retrievers import ZepRetriever
+from uuid import uuid4
+from zep_python import ZepClient
+from zep_python.exceptions import NotFoundError
 
 
 def load_document_single(filepath: str) -> Document:
     # Loads a single document from a file path
+    
     file_extension = os.path.splitext(filepath)[1]
     loader_class = settings.DOCUMENTS_MAP.get(file_extension)
     if loader_class:
@@ -86,9 +89,34 @@ def load_documents(source_folder: str):
     return docs
 
 
-def create_vectordb(source_folder):
-    if not os.path.exists(source_folder):
-        os.makedirs(source_folder)
+
+def sanitize_name(name):
+    # Remove non-alphanumeric characters
+
+    return ''.join(c for c in name if c.isalnum())
+
+
+from zep_python import ZepClient, NotFoundError
+
+def create_vectordb(source_folder=settings.DOCUMENT_FOLDER):
+    # Sanitize the source_folder to use it as the collection name
+    collection_name = sanitize_name(source_folder)
+    # Initialize the Zep client
+    client = ZepClient(base_url=settings.ZEP_API_URL)
+    # Check if a collection with the given name already exists
+    try:
+        collection = client.document.get_collection(collection_name)
+        print(f"Collection '{collection_name}' already exists.")
+        print(f"Number of documents: {collection.document_count}")
+        print(f"Number of embedded documents: {collection.document_embedded_count}")
+    except NotFoundError:
+        # If not, create a new collection
+        collection = client.document.add_collection(
+            name=collection_name,
+            embedding_dimensions=384,  # this must match the model you've configured for
+            is_auto_embedded=True,  # use Zep's built-in embedder. Defaults to True
+        )
+        print(f"Created new collection '{collection_name}'.")
 
     # Load documents and split in chunks
     helper_module.log(f"Loading documents from {source_folder}", 'info')
@@ -106,64 +134,77 @@ def create_vectordb(source_folder):
     helper_module.log(f"Loaded {len(documents)} documents from {source_folder}", 'info')
     helper_module.log(f"{len(texts)} chunks of text split", 'info')
 
-    embeddings = OpenAIEmbeddings()
+    # Create a ZepVectorStore instance
+    my_vectordb = ZepVectorStore(api_url=settings.ZEP_API_URL, collection_name=collection_name)
 
-    my_vectordb = Chroma.from_documents(
-        collection_name=settings.VECTORDB_COLLECTION,
-        documents=texts,
-        embedding=embeddings,
-        persist_directory=settings.CHROMA_DB_FOLDER,
-    )
+    # Add documents to the collection
+    uuids = my_vectordb.add_documents(texts)
 
     return my_vectordb
 
 
-def get_vectordb(collection_name=settings.VECTORDB_COLLECTION):
-    embeddings = OpenAIEmbeddings()
-    my_vectordb = Chroma(
-        collection_name=collection_name,
-        persist_directory=settings.CHROMA_DB_FOLDER,
-        embedding_function=embeddings
-    )
+def get_vectordb(source_folder=settings.VECTORDB_COLLECTION):
+    # Sanitize the source_folder to use it as the collection name
+    collection_name = sanitize_name(source_folder)
+
+    # Ensure the collection name has at least 5 characters
+    if len(collection_name) < 5:
+        collection_name += 'x' * (5 - len(collection_name))
+
+    
+    client = ZepClient(base_url=settings.ZEP_API_URL)
+    try:
+        collection = client.document.get_collection(collection_name)
+    except NotFoundError:
+        collection = client.document.add_collection(
+            name=collection_name,
+            embedding_dimensions=1536,  # this must match the model you've configured for
+            is_auto_embedded=True,  # use Zep's built-in embedder. Defaults to True
+        )
+    my_vectordb = ZepVectorStore(api_url=settings.ZEP_API_URL, collection_name=collection_name)
 
     return my_vectordb
 
 
 def delete_vectordb():
-    my_vectordb = get_vectordb(settings.VECTORDB_COLLECTION)
-    my_vectordb.delete_collection()
-    my_vectordb.persist()
+    client = ZepClient(base_url=settings.ZEP_API_URL)
+    client.document.delete_collection(settings.VECTORDB_COLLECTION)
     helper_module.log(f"Vector DB collection deleted: {settings.VECTORDB_COLLECTION}", 'info')
 
 
 def retrieval_qa_run(system_message, human_input, context_memory, callbacks=None):
+    try:
+        my_vectordb = get_vectordb()
+        retriever = my_vectordb.as_retriever(search_kwargs={"k": settings.NUM_SOURCES_TO_RETURN})
 
-    my_vectordb = get_vectordb()
-    retriever = my_vectordb.as_retriever(search_kwargs={"k": settings.NUM_SOURCES_TO_RETURN})
+        template = system_message + settings.RETRIEVER_TEMPLATE
 
-    template = system_message + settings.RETRIEVER_TEMPLATE
+        qa_prompt = PromptTemplate(input_variables=["history", "context", "question"],
+                                   template=template)
 
-    qa_prompt = PromptTemplate(input_variables=["history", "context", "question"],
-                               template=template)
+        qa_chain = RetrievalQA.from_chain_type(
+            llm=ChatOpenAI(
+                temperature=settings.DEFAULT_GPT_QA_HELPER_MODEL_TEMPERATURE,
+                model_name=settings.DEFAULT_GPT_QA_HELPER_MODEL,
+                streaming=True,
+                callbacks=callbacks,
+            ),
+            chain_type="stuff",
+            retriever=retriever,
+            return_source_documents=True,
+            chain_type_kwargs={"prompt": qa_prompt,
+                               "memory": context_memory},
+        )
+        helper_module.log("Running QA chain...", 'info')
+        response = qa_chain(human_input)
+        my_answer, my_docs = response["result"], response["source_documents"]
+        helper_module.log(f"Answer: {my_answer}", 'info')
+        return my_answer, my_docs
+    except Exception as e:
+        print(f"Error in retrieval_qa_run: {str(e)}")
+        return "Sorry, an error occurred while fetching the answer.", []
 
-    qa_chain = RetrievalQA.from_chain_type(
-        llm=ChatOpenAI(
-            temperature=settings.DEFAULT_GPT_QA_HELPER_MODEL_TEMPERATURE,
-            model_name=settings.DEFAULT_GPT_QA_HELPER_MODEL,
-            streaming=True,
-            callbacks=callbacks,
-        ),
-        chain_type="stuff",
-        retriever=retriever,
-        return_source_documents=True,
-        chain_type_kwargs={"prompt": qa_prompt,
-                           "memory": context_memory},
-    )
-    helper_module.log("Running QA chain...", 'info')
-    response = qa_chain(human_input)
-    my_answer, my_docs = response["result"], response["source_documents"]
-    helper_module.log(f"Answer: {my_answer}", 'info')
-    return my_answer, my_docs
+
 
 
 def embed_conversations():
@@ -192,12 +233,20 @@ def embed_conversations():
 
 
 def display_vectordb_info():
-    persistent_client = chromadb.PersistentClient(path=settings.CHROMA_DB_FOLDER)
-    collection = persistent_client.get_or_create_collection(settings.VECTORDB_COLLECTION)
+    my_vectordb = get_vectordb(settings.VECTORDB_COLLECTION)
     helper_module.log(f"VectorDB Folder: {settings.CONVERSATION_SAVE_FOLDER}", 'info')
     helper_module.log(f"Collection: {settings.VECTORDB_COLLECTION}", 'info')
-    helper_module.log(f"Number of items in collection: {collection.count()}", 'info')
-
+    
+def add_documents(self, documents):
+    # Convert documents to the format expected by Zep
+    zep_documents = [self._convert_to_zep_document(doc) for doc in documents]
+    # Add documents to the collection
+    response = self.client.document.add_documents(self.collection_name, zep_documents)
+    # Log the response
+    helper_module.log(f"Response from add_documents: {response}", 'info')
+    # Extract the UUIDs of the added documents
+    uuids = [doc.uuid for doc in response.documents]
+    return uuids
 
 if __name__ == "__main__":
     load_dotenv()
@@ -222,7 +271,7 @@ if __name__ == "__main__":
                 if 'quit' in query or 'exit' in query:
                     break
                 helper_module.log(f"Querying model: {settings.DEFAULT_GPT_QA_HELPER_MODEL}", 'info')
-                system_input = characters.CUSTOM_INSTRUCTIONS
+                system_input = settings.CUSTOM_INSTRUCTIONS
                 answer, docs = retrieval_qa_run(system_input, query, memory)
 
                 # Print the result
@@ -242,5 +291,4 @@ if __name__ == "__main__":
             break
         else:
             print("Unknown choice.\n")
-
 

@@ -8,7 +8,6 @@ Flask
 numpy
 tools
 chardet
-PyObjC
 pyaudio
 playsound
 zep-python

@@ -689,7 +689,7 @@ def setup_and_cleanup(func):
         helper_module.log(
             f"Firing up Flask audio server...", "info"
         )
-        subprocess.Popen(["python", "audio_server.py"])
+        subprocess.Popen(["python3", "audio_server.py"])
     load_dotenv()
     openai.api_key = os.getenv('OPENAI_API_KEY')
 
