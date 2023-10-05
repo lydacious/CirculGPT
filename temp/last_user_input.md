@@ -1,1 +1,1 @@
-qa: what about the team behind it?
+qa: what is lagrange

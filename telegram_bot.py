@@ -14,7 +14,41 @@ ZEP_BASE_URL = settings.ZEP_API_URL
 
 
 async def start(update: Update, context: CallbackContext):
-    await update.message.reply_text("Welcome to Lagrange_QA! Send /help for instructions. You can write in any language, the bot will respond accordingly.")
+    try:
+        user_id = update.message.from_user.id
+        session_id = str(user_id)
+
+        # Check if the session already exists
+        session_exists = False
+        async with ZepClient(ZEP_BASE_URL) as client:
+            try:
+                existing_session = await client.memory.aget_session(session_id)
+                if existing_session:
+                    session_exists = True
+            except Exception as session_error:
+                print(f"Session error: {session_error}")
+
+        # If the session doesn't exist, create a new one
+        if not session_exists:
+            async with ZepClient(ZEP_BASE_URL) as client:
+                session = Session(
+                    session_id=session_id,
+                    metadata={"telegram_user_id": user_id}
+                )
+                await client.memory.aadd_session(session)
+
+                # Initialize memory with "initial" user message and "memory" bot message
+                messages = [
+                    Message(role="user", content="initial"),
+                    Message(role="bot", content="memory"),
+                ]
+                memory = Memory(messages=messages)
+                await client.memory.aadd_memory(session_id, memory)
+
+        await update.message.reply_text("Welcome to Lagrange_QA! Send /help for instructions. You can write in any language, and the bot will respond accordingly.")
+    except Exception as e:
+        print(f"Exception occurred: {e}")
+
 
 async def help_command(update: Update, context: CallbackContext):
     await update.message.reply_text("You can ask questions using by simply typing your question, and use /history to see your past questions.")
