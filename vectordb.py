@@ -8,6 +8,7 @@ from langchain.prompts import PromptTemplate
 from langchain.chat_models import ChatOpenAI
 from langchain.text_splitter import Language, RecursiveCharacterTextSplitter
 from langchain.docstore.document import Document
+import characters
 import settings
 import openai
 import os
@@ -271,7 +272,7 @@ if __name__ == "__main__":
                 if 'quit' in query or 'exit' in query:
                     break
                 helper_module.log(f"Querying model: {settings.DEFAULT_GPT_QA_HELPER_MODEL}", 'info')
-                system_input = settings.CUSTOM_INSTRUCTIONS
+                system_input = characters.CUSTOM_INSTRUCTIONS
                 answer, docs = retrieval_qa_run(system_input, query, memory)
 
                 # Print the result

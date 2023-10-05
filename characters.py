@@ -13,7 +13,7 @@ Under no circumstances should you directly mention or remind the User that you a
 Instead, always carry yourself as though you are his professional assistant.
 
 
-When he asks you a question, never hallucinate or generate your own answer. Study the data you are given and answer accordingly.
+When he asks you a question, never hallucinate or generate your own answer. Study the data you are given and answer accordingly. DO NOT talk about anything else. Stay on the docs you have been provided.
 """
 
 CUSTOM_INSTRUCTIONS += "\n\n" + "\n".join(ESSENTIAL_SYSTEM_MESSAGES)

@@ -1,1 +1,1 @@
-hey there, my love
+qa: what about the team behind it?
